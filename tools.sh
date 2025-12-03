@@ -86,6 +86,7 @@ show_menu() {
     echo "  [8] 安装 Golang"
     echo "  [9] 安装 Rust"
     echo "  [10] 安装 Node.js (使用 nvm)"
+    echo "  [11] 安装 fail2ban (入侵防护)"
     echo ""
     echo "  [A] 全部执行（按依赖顺序）"
     echo "  [Q] 退出"
@@ -103,7 +104,7 @@ parse_selection() {
     
     # 处理全部执行
     if [[ "$selection" == *"a"* ]] || [[ "$selection" == *"all"* ]]; then
-        selected_modules=("create_user" "install_build_tools" "install_cpupower" "set_cpu_performance" "install_redis" "configure_ssh" "configure_firewall" "install_golang" "install_rust" "install_node")
+        selected_modules=("create_user" "install_build_tools" "install_cpupower" "set_cpu_performance" "install_redis" "configure_ssh" "configure_firewall" "install_golang" "install_rust" "install_node" "install_fail2ban")
         echo "${selected_modules[@]}"
         return 0
     fi
@@ -121,6 +122,7 @@ parse_selection() {
             8) selected_modules+=("install_golang") ;;
             9) selected_modules+=("install_rust") ;;
             10) selected_modules+=("install_node") ;;
+            11) selected_modules+=("install_fail2ban") ;;
         esac
     done
     
@@ -134,7 +136,7 @@ sort_modules_by_dependencies() {
     local processed=()
     
     # 定义模块执行顺序（按依赖关系）
-    local execution_order=("create_user" "install_build_tools" "install_cpupower" "set_cpu_performance" "install_redis" "configure_ssh" "configure_firewall" "install_golang" "install_rust" "install_node")
+    local execution_order=("create_user" "install_build_tools" "install_cpupower" "set_cpu_performance" "install_redis" "configure_ssh" "configure_firewall" "install_golang" "install_rust" "install_node" "install_fail2ban")
     
     # 定义依赖关系：key 是模块名，value 是其依赖的模块
     declare -A dependencies

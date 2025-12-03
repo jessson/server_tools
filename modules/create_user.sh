@@ -53,9 +53,20 @@ echo ""
 echo "创建用户 $USERNAME 和 home 目录..."
 if id "$USERNAME" &>/dev/null; then
     echo "用户 $USERNAME 已存在，跳过创建"
+    # 询问是否要修改密码
+    read -p "是否要为用户 $USERNAME 设置新密码? (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        passwd "$USERNAME"
+    fi
 else
     useradd -m -s /bin/bash "$USERNAME"
     echo "用户 $USERNAME 创建成功"
+    
+    # 设置用户密码
+    echo ""
+    echo "请为用户 $USERNAME 设置密码:"
+    passwd "$USERNAME"
 fi
 
 # 确保 home 目录存在
