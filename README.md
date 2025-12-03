@@ -8,8 +8,9 @@
 - 🔄 **依赖管理** - 自动处理模块间依赖关系，按正确顺序执行
 - 🛡️ **安全配置** - SSH 密钥登录、防火墙配置等安全加固
 - 🚀 **开发环境** - 一键安装常用开发工具（Go、Rust、Node.js）
-- ⚡ **性能优化** - CPU 性能模式配置
+- ⚡ **性能优化** - CPU 性能模式配置、系统内核参数优化
 - 📦 **软件安装** - Redis 等常用服务安装
+- 🔧 **系统调优** - 网络缓冲区、TCP 参数等内核参数优化（适用于 BSC 节点等高性能应用）
 
 ## 脚本结构
 
@@ -26,7 +27,9 @@ server_tools/
 │   ├── configure_firewall.sh   # 配置防火墙模块
 │   ├── install_golang.sh       # 安装 Golang 模块
 │   ├── install_rust.sh         # 安装 Rust 模块
-│   └── install_node.sh         # 安装 Node.js 模块
+│   ├── install_node.sh         # 安装 Node.js 模块
+│   ├── install_fail2ban.sh     # 安装 fail2ban 模块
+│   └── configure_sysctl.sh    # 系统内核参数优化模块
 └── README.md                   # 说明文档
 ```
 
@@ -91,6 +94,17 @@ server_tools/
     - 支持为指定用户安装
     - 自动配置 nvm 环境变量
 
+11. **安装 fail2ban** (`install_fail2ban.sh`)
+    - 安装并配置 fail2ban 入侵防护系统
+    - 自动配置 SSH 防护规则
+    - 防止暴力破解攻击
+
+12. **配置系统内核参数优化** (`configure_sysctl.sh`)
+    - 优化系统内核参数，适用于高性能应用（如 BSC 节点）
+    - 配置网络缓冲区、TCP 参数、系统资源等
+    - 支持立即应用或重启后生效
+    - **注意**: 此模块不在"全部执行"选项中，需要单独选择
+
 ## 使用方法
 
 ### 基本使用
@@ -126,6 +140,8 @@ sudo ./tools.sh
   [8] 安装 Golang
   [9] 安装 Rust
   [10] 安装 Node.js (使用 nvm)
+  [11] 安装 fail2ban (入侵防护)
+  [12] 配置系统内核参数优化 (BSC节点优化)
 
   [A] 全部执行（按依赖顺序）
   [Q] 退出
@@ -162,6 +178,9 @@ sudo ./tools.sh
 8. install_golang
 9. install_rust
 10. install_node
+11. install_fail2ban
+
+**注意**: `configure_sysctl` (系统内核参数优化) 不在"全部执行"选项中，需要单独选择执行。
 
 ## 详细功能说明
 
@@ -243,6 +262,51 @@ sudo ./tools.sh
 - 新终端会话需要执行: `source ~/.nvm/nvm.sh` (Node.js)
 - 或重新登录以自动加载环境变量
 
+### 系统内核参数优化
+
+系统内核参数优化模块 (`configure_sysctl.sh`) 用于优化高性能应用（如 BSC 节点）的系统参数。
+
+#### 配置的参数
+
+**网络缓冲区**:
+- `net.core.rmem_default/wmem_default`: 32MB
+- `net.core.rmem_max/wmem_max`: 128MB
+- `net.ipv4.tcp_rmem/wmem`: TCP 接收/发送缓冲区配置
+
+**TCP 参数**:
+- `net.ipv4.tcp_keepalive_*`: TCP 保活配置
+- `net.core.default_qdisc`: fq (公平队列)
+- `net.ipv4.tcp_congestion_control`: bbr (拥塞控制算法)
+- `net.ipv4.tcp_max_tw_buckets`: TIME_WAIT 连接数限制
+
+**系统资源**:
+- `vm.swappiness`: 0 (禁用 swap)
+- `fs.file-max`: 4194304 (文件描述符上限)
+- `fs.nr_open`: 4194304 (单进程文件描述符上限)
+- `vm.dirty_ratio/dirty_background_ratio`: 脏页刷盘配置
+
+#### 配置文件位置
+
+- 优先使用: `/etc/sysctl.d/99-bsc-optimization.conf` (模块化配置)
+- 备用: `/etc/sysctl.conf` (传统配置文件)
+
+#### 应用方式
+
+1. **立即应用**: 脚本会询问是否立即应用配置，选择 `y` 后配置会立即生效
+2. **重启生效**: 如果选择不立即应用，配置会保存到文件，重启后自动生效
+3. **手动应用**: 
+   - 使用 `/etc/sysctl.d/`: `systemctl restart systemd-sysctl` 或 `sysctl -p /etc/sysctl.d/99-bsc-optimization.conf`
+   - 使用 `/etc/sysctl.conf`: `sysctl -p /etc/sysctl.conf`
+
+#### 自动加载机制
+
+- `/etc/sysctl.d/` 目录下的配置文件会在系统启动时由 `systemd-sysctl.service` 自动加载
+- 无需额外配置，系统会自动读取并应用这些配置
+
+#### 验证配置
+
+脚本执行完成后会自动验证所有配置参数，显示当前值与期望值的对比。
+
 ### 自定义用户名
 
 创建用户模块会在执行时提示输入用户名：
@@ -283,6 +347,10 @@ sudo ./tools.sh
 - **Node.js 安装失败**: 检查网络连接，确保可以访问 GitHub 和 nvm 仓库
 - **SSH 连接断开**: 检查防火墙配置，确保 SSH 端口 (22) 已开放
 - **环境变量未生效**: 执行 `source ~/.bashrc` 或重新登录
+- **sysctl 配置未生效**: 
+  - 检查配置文件是否存在: `ls -l /etc/sysctl.d/99-bsc-optimization.conf`
+  - 手动应用: `systemctl restart systemd-sysctl` 或 `sysctl -p <配置文件路径>`
+  - 检查 BBR 模块: `lsmod | grep tcp_bbr`，如未加载则执行 `modprobe tcp_bbr`
 
 ## 许可证
 

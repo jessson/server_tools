@@ -87,6 +87,7 @@ show_menu() {
     echo "  [9] 安装 Rust"
     echo "  [10] 安装 Node.js (使用 nvm)"
     echo "  [11] 安装 fail2ban (入侵防护)"
+    echo "  [12] 配置系统内核参数优化 (BSC节点优化)"
     echo ""
     echo "  [A] 全部执行（按依赖顺序）"
     echo "  [Q] 退出"
@@ -123,6 +124,7 @@ parse_selection() {
             9) selected_modules+=("install_rust") ;;
             10) selected_modules+=("install_node") ;;
             11) selected_modules+=("install_fail2ban") ;;
+            12) selected_modules+=("configure_sysctl") ;;
         esac
     done
     
@@ -136,7 +138,7 @@ sort_modules_by_dependencies() {
     local processed=()
     
     # 定义模块执行顺序（按依赖关系）
-    local execution_order=("create_user" "install_build_tools" "install_cpupower" "set_cpu_performance" "install_redis" "configure_ssh" "configure_firewall" "install_golang" "install_rust" "install_node" "install_fail2ban")
+    local execution_order=("create_user" "install_build_tools" "install_cpupower" "set_cpu_performance" "install_redis" "configure_ssh" "configure_firewall" "install_golang" "install_rust" "install_node" "install_fail2ban" "configure_sysctl")
     
     # 定义依赖关系：key 是模块名，value 是其依赖的模块
     declare -A dependencies
