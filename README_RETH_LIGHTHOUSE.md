@@ -11,7 +11,6 @@
 - [配置说明](#配置说明)
 - [运行节点](#运行节点)
 - [同步状态](#同步状态)
-- [系统服务配置](#系统服务配置)
 - [监控和维护](#监控和维护)
 - [故障排除](#故障排除)
 - [性能优化建议](#性能优化建议)
@@ -49,19 +48,21 @@ Reth + Lighthouse 的组合优势：
 
 ### 硬件要求
 
-#### 最小配置（测试/开发环境）
+#### 最小配置（轻量级优化模式）
 
-- **CPU**: 4 核心
-- **内存**: 16 GB RAM
-- **存储**: 2 TB SSD（推荐 NVMe SSD）
+- **CPU**: 4 核心（推荐 8 核心）
+- **内存**: 16 GB RAM（推荐 32 GB）
+- **存储**: 500 GB SSD（推荐 1 TB NVMe SSD，使用修剪模式）
 - **网络**: 100 Mbps 带宽
 
 #### 推荐配置（主网生产环境）
 
 - **CPU**: 8+ 核心（推荐 16 核心）
 - **内存**: 32 GB RAM（推荐 64 GB）
-- **存储**: 4 TB+ NVMe SSD（预留未来增长空间）
+- **存储**: 1-2 TB NVMe SSD（使用修剪模式，无需完整历史数据）
 - **网络**: 1 Gbps 带宽
+
+**注意**: 本配置使用修剪模式（pruned mode），只保留必要的链数据，大幅减少磁盘占用。
 
 ### 软件要求
 
@@ -284,15 +285,22 @@ mkdir -p /etc/lighthouse
 
 **重要**: 必须先启动 Reth（执行层），然后再启动 Lighthouse（共识层）。
 
-### 1. 启动 Reth
+### 1. 启动 Reth（优化配置）
 
-#### 基本启动命令
+#### 优化启动命令（推荐 - 节省磁盘空间和 CPU）
+
+本配置使用修剪模式，只保留必要的链数据，大幅减少磁盘占用和 CPU 负载：
 
 ```bash
-# 主网启动命令
+# 创建日志目录
+mkdir -p /var/log/reth
+
+# 优化启动命令（手动启动）
 reth node \
-    --full \
-    --datadir /path/to/data \
+    --datadir /var/lib/reth \
+    --chain mainnet \
+    --prune \
+    --prune.max-history 128 \
     --http \
     --http.api eth,net,web3,engine,admin \
     --http.port 8545 \
@@ -304,30 +312,44 @@ reth node \
     --authrpc.addr 127.0.0.1 \
     --authrpc.port 8551 \
     --authrpc.jwtsecret /var/lib/reth/jwt-secret \
-    --port 30303
+    --port 30303 \
+    --max-peers 25 \
+    --db.max-readers 8 \
+    --db.max-writers 4 \
+    --txpool.max-size 1000 \
+    --txpool.max-account-slots 16
 ```
 
-#### 参数说明
+#### 优化参数说明
 
-- `--datadir`: 数据存储目录
-- `--http`: 启用 HTTP JSON-RPC
-- `--http.api`: 启用的 API 接口
-- `--ws`: 启用 WebSocket JSON-RPC
-- `--authrpc.*`: Engine API 配置（供 Lighthouse 连接）
-- `--authrpc.jwtsecret`: JWT 密钥文件路径
-- `--port`: P2P 网络端口
+**磁盘空间优化**:
+- `--prune`: 启用修剪模式，自动清理旧的历史数据
+- `--prune.max-history 128`: 只保留最近 128 个区块的历史数据（可根据需要调整，值越小占用越少）
 
-#### 完整启动命令（包含更多选项）
+**CPU 性能优化**:
+- `--max-peers 25`: 减少对等节点数（默认 50），降低网络和 CPU 负载
+- `--db.max-readers 8`: 限制数据库读取器数量，避免过度并发
+- `--db.max-writers 4`: 限制数据库写入器数量，优化 I/O 性能
+- `--txpool.max-size 1000`: 限制交易池大小，减少内存占用
+- `--txpool.max-account-slots 16`: 限制每个账户的交易槽位
+
+**API 优化**:
+- 移除了 `debug` 和 `trace` API（这些会占用大量资源）
+- 只保留必要的 API：`eth,net,web3,engine,admin`
+
+#### 使用 nohup 后台启动（推荐）
 
 ```bash
-reth node \
+# 使用 nohup 在后台启动 Reth
+nohup reth node \
     --datadir /var/lib/reth \
     --chain mainnet \
+    --prune \
+    --prune.max-history 128 \
     --http \
-    --http.api eth,net,web3,engine,admin,debug,trace \
+    --http.api eth,net,web3,engine,admin \
     --http.port 8545 \
     --http.addr 0.0.0.0 \
-    --http.corsdomain "*" \
     --ws \
     --ws.api eth,net,web3,engine,admin \
     --ws.port 8546 \
@@ -336,18 +358,80 @@ reth node \
     --authrpc.port 8551 \
     --authrpc.jwtsecret /var/lib/reth/jwt-secret \
     --port 30303 \
-    --max-peers 50 \
-    --nat extip:$(curl -s ifconfig.me)
+    --max-peers 25 \
+    --db.max-readers 8 \
+    --db.max-writers 4 \
+    --txpool.max-size 1000 \
+    --txpool.max-account-slots 16 \
+    > /var/log/reth.log 2>&1 &
+
+# 查看进程
+ps aux | grep reth
+
+# 查看日志
+tail -f /var/log/reth.log
 ```
 
-### 2. 启动 Lighthouse
-
-在 Reth 启动后，启动 Lighthouse：
-
-#### 基本启动命令
+#### 使用 screen 启动（便于管理）
 
 ```bash
-# 启动 Lighthouse 信标节点
+# 安装 screen（如果未安装）
+sudo apt install screen -y
+
+# 创建启动脚本
+cat > ~/start_reth.sh << 'EOF'
+#!/bin/bash
+cd /var/lib/reth
+reth node \
+    --datadir /var/lib/reth \
+    --chain mainnet \
+    --prune \
+    --prune.max-history 128 \
+    --http \
+    --http.api eth,net,web3,engine,admin \
+    --http.port 8545 \
+    --http.addr 0.0.0.0 \
+    --ws \
+    --ws.api eth,net,web3,engine,admin \
+    --ws.port 8546 \
+    --ws.addr 0.0.0.0 \
+    --authrpc.addr 127.0.0.1 \
+    --authrpc.port 8551 \
+    --authrpc.jwtsecret /var/lib/reth/jwt-secret \
+    --port 30303 \
+    --max-peers 25 \
+    --db.max-readers 8 \
+    --db.max-writers 4 \
+    --txpool.max-size 1000 \
+    --txpool.max-account-slots 16
+EOF
+
+chmod +x ~/start_reth.sh
+
+# 在 screen 中启动
+screen -S reth -dm bash -c '~/start_reth.sh'
+
+# 查看 screen 会话
+screen -ls
+
+# 连接到 screen 会话
+screen -r reth
+
+# 退出 screen（不断开进程）：按 Ctrl+A，然后按 D
+# 停止 Reth：在 screen 中按 Ctrl+C
+```
+
+### 2. 启动 Lighthouse（优化配置）
+
+在 Reth 启动并运行后，启动 Lighthouse：
+
+#### 优化启动命令
+
+```bash
+# 创建日志目录
+mkdir -p /var/log/lighthouse
+
+# 优化启动命令（手动启动）
 lighthouse bn \
     --network mainnet \
     --datadir /var/lib/lighthouse \
@@ -357,74 +441,99 @@ lighthouse bn \
     --http \
     --http-address 0.0.0.0 \
     --http-port 5052 \
-    --metrics \
-    --metrics-address 0.0.0.0 \
-    --metrics-port 5054 \
-    --port 9000
-```
-
-#### 参数说明
-
-- `bn`: 信标节点（beacon node）模式
-- `--network`: 网络类型（mainnet, goerli, sepolia 等）
-- `--datadir`: 数据存储目录
-- `--execution-endpoint`: Reth Engine API 地址
-- `--execution-jwt`: JWT 密钥文件路径（与 Reth 使用相同的文件）
-- `--checkpoint-sync-url`: 检查点同步 URL（可选，加速同步）
-- `--http`: 启用 HTTP API
-- `--metrics`: 启用指标收集
-- `--port`: P2P 网络端口
-
-#### 完整启动命令（包含更多选项）
-
-```bash
-lighthouse bn \
-    --network mainnet \
-    --datadir /var/lib/lighthouse \
-    --execution-endpoint http://127.0.0.1:8551 \
-    --execution-jwt /var/lib/reth/jwt-secret \
-    --checkpoint-sync-url https://beaconstate.info \
-    --http \
-    --http-address 0.0.0.0 \
-    --http-port 5052 \
-    --http-allow-origin "*" \
-    --metrics \
-    --metrics-address 0.0.0.0 \
-    --metrics-port 5054 \
     --port 9000 \
-    --target-peers 50 \
+    --target-peers 25 \
     --disable-deposit-contract-sync \
-    --validator-monitor-auto \
     --execution-timeout-multiplier 2
 ```
 
-### 3. 使用 nohup 或 screen 运行
+#### 优化参数说明
 
-为了在后台运行，可以使用 `nohup` 或 `screen`：
+**资源优化**:
+- `--target-peers 25`: 减少目标对等节点数（默认 50），降低网络和 CPU 负载
+- `--disable-deposit-contract-sync`: 禁用存款合约同步，节省资源
+- 移除了 `--metrics`：如果不需要监控指标，可以移除以节省资源
+
+**同步优化**:
+- `--checkpoint-sync-url https://beaconstate.info`: 使用检查点同步，大幅加速初始同步
+- `--execution-timeout-multiplier 2`: 增加执行层超时倍数，提高稳定性
+
+#### 使用 nohup 后台启动（推荐）
 
 ```bash
-# 使用 nohup
-nohup reth node --datadir /var/lib/reth --http --http.port 8545 --authrpc.addr 127.0.0.1 --authrpc.port 8551 --authrpc.jwtsecret /var/lib/reth/jwt-secret > /var/log/reth.log 2>&1 &
+# 使用 nohup 在后台启动 Lighthouse
+nohup lighthouse bn \
+    --network mainnet \
+    --datadir /var/lib/lighthouse \
+    --execution-endpoint http://127.0.0.1:8551 \
+    --execution-jwt /var/lib/reth/jwt-secret \
+    --checkpoint-sync-url https://beaconstate.info \
+    --http \
+    --http-address 0.0.0.0 \
+    --http-port 5052 \
+    --port 9000 \
+    --target-peers 25 \
+    --disable-deposit-contract-sync \
+    --execution-timeout-multiplier 2 \
+    > /var/log/lighthouse.log 2>&1 &
 
-nohup lighthouse bn --network mainnet --datadir /var/lib/lighthouse --execution-endpoint http://127.0.0.1:8551 --execution-jwt /var/lib/reth/jwt-secret --http --http-port 5052 > /var/log/lighthouse.log 2>&1 &
+# 查看进程
+ps aux | grep lighthouse
+
+# 查看日志
+tail -f /var/log/lighthouse.log
 ```
 
-或使用 `screen`：
+#### 使用 screen 启动（便于管理）
 
 ```bash
-# 安装 screen
-sudo apt install screen -y
+# 创建启动脚本
+cat > ~/start_lighthouse.sh << 'EOF'
+#!/bin/bash
+cd /var/lib/lighthouse
+lighthouse bn \
+    --network mainnet \
+    --datadir /var/lib/lighthouse \
+    --execution-endpoint http://127.0.0.1:8551 \
+    --execution-jwt /var/lib/reth/jwt-secret \
+    --checkpoint-sync-url https://beaconstate.info \
+    --http \
+    --http-address 0.0.0.0 \
+    --http-port 5052 \
+    --port 9000 \
+    --target-peers 25 \
+    --disable-deposit-contract-sync \
+    --execution-timeout-multiplier 2
+EOF
 
-# 启动 screen 会话
-screen -S reth
-# 运行 reth 命令
-# 按 Ctrl+A, 然后按 D 退出 screen
+chmod +x ~/start_lighthouse.sh
 
-screen -S lighthouse
-# 运行 lighthouse 命令
-# 按 Ctrl+A, 然后按 D 退出 screen
+# 在 screen 中启动
+screen -S lighthouse -dm bash -c '~/start_lighthouse.sh'
 
-# 重新连接
+# 查看 screen 会话
+screen -ls
+
+# 连接到 screen 会话
+screen -r lighthouse
+
+# 退出 screen（不断开进程）：按 Ctrl+A，然后按 D
+# 停止 Lighthouse：在 screen 中按 Ctrl+C
+```
+
+### 3. 停止节点
+
+```bash
+# 查找进程
+ps aux | grep -E "reth|lighthouse"
+
+# 停止 Reth
+pkill -f "reth node"
+
+# 停止 Lighthouse
+pkill -f "lighthouse bn"
+
+# 如果在 screen 中运行，可以连接到 screen 后按 Ctrl+C
 screen -r reth
 screen -r lighthouse
 ```
@@ -462,114 +571,122 @@ curl http://localhost:5052/eth/v1/beacon/headers/finalized
 
 ### 同步时间
 
-- **完整同步**: 首次同步可能需要数天到数周，取决于硬件和网络
-- **检查点同步**: 使用 `--checkpoint-sync-url` 可以大幅加速同步（推荐）
+- **修剪模式同步**: 使用 `--prune` 模式，首次同步时间会大幅缩短，通常数小时到数天即可完成
+- **检查点同步**: 使用 `--checkpoint-sync-url` 可以大幅加速 Lighthouse 初始同步（推荐）
+- **磁盘占用**: 修剪模式下的磁盘占用约为完整节点的 10-20%，通常只需要 200-500 GB
 
-## 系统服务配置
+## 启动脚本（可选）
 
-为了确保节点在系统重启后自动启动，可以配置 systemd 服务。
+为了方便管理，可以创建启动和停止脚本：
 
-### 1. 创建 Reth 服务
-
-创建文件 `/etc/systemd/system/reth.service`:
-
-```ini
-[Unit]
-Description=Reth Ethereum Execution Client
-After=network.target
-
-[Service]
-Type=simple
-User=your_username
-Group=your_username
-WorkingDirectory=/var/lib/reth
-ExecStart=/usr/local/bin/reth node \
-    --datadir /var/lib/reth \
-    --http \
-    --http.api eth,net,web3,engine,admin \
-    --http.port 8545 \
-    --http.addr 0.0.0.0 \
-    --ws \
-    --ws.api eth,net,web3,engine,admin \
-    --ws.port 8546 \
-    --ws.addr 0.0.0.0 \
-    --authrpc.addr 127.0.0.1 \
-    --authrpc.port 8551 \
-    --authrpc.jwtsecret /var/lib/reth/jwt-secret \
-    --port 30303 \
-    --max-peers 50
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=reth
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**注意**: 将 `your_username` 替换为实际运行节点的用户名。
-
-### 2. 创建 Lighthouse 服务
-
-创建文件 `/etc/systemd/system/lighthouse-beacon.service`:
-
-```ini
-[Unit]
-Description=Lighthouse Ethereum Consensus Client
-After=network.target reth.service
-Requires=reth.service
-
-[Service]
-Type=simple
-User=your_username
-Group=your_username
-WorkingDirectory=/var/lib/lighthouse
-ExecStart=/usr/local/bin/lighthouse bn \
-    --network mainnet \
-    --datadir /var/lib/lighthouse \
-    --execution-endpoint http://127.0.0.1:8551 \
-    --execution-jwt /var/lib/reth/jwt-secret \
-    --checkpoint-sync-url https://beaconstate.info \
-    --http \
-    --http-address 0.0.0.0 \
-    --http-port 5052 \
-    --metrics \
-    --metrics-address 0.0.0.0 \
-    --metrics-port 5054 \
-    --port 9000 \
-    --target-peers 50
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=lighthouse
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### 3. 启用和启动服务
+### 创建启动脚本
 
 ```bash
-# 重新加载 systemd
-sudo systemctl daemon-reload
+# 创建启动脚本
+cat > ~/start_nodes.sh << 'EOF'
+#!/bin/bash
 
-# 启用服务（开机自启）
-sudo systemctl enable reth.service
-sudo systemctl enable lighthouse-beacon.service
+# 检查 Reth 是否已运行
+if pgrep -f "reth node" > /dev/null; then
+    echo "Reth 已在运行"
+else
+    echo "启动 Reth..."
+    nohup reth node \
+        --datadir /var/lib/reth \
+        --chain mainnet \
+        --prune \
+        --prune.max-history 128 \
+        --http \
+        --http.api eth,net,web3,engine,admin \
+        --http.port 8545 \
+        --http.addr 0.0.0.0 \
+        --ws \
+        --ws.api eth,net,web3,engine,admin \
+        --ws.port 8546 \
+        --ws.addr 0.0.0.0 \
+        --authrpc.addr 127.0.0.1 \
+        --authrpc.port 8551 \
+        --authrpc.jwtsecret /var/lib/reth/jwt-secret \
+        --port 30303 \
+        --max-peers 25 \
+        --db.max-readers 8 \
+        --db.max-writers 4 \
+        --txpool.max-size 1000 \
+        --txpool.max-account-slots 16 \
+        > /var/log/reth.log 2>&1 &
+    echo "Reth 已启动，PID: $(pgrep -f 'reth node')"
+fi
 
-# 启动服务
-sudo systemctl start reth.service
-sudo systemctl start lighthouse-beacon.service
+# 等待 Reth 启动
+sleep 5
+
+# 检查 Lighthouse 是否已运行
+if pgrep -f "lighthouse bn" > /dev/null; then
+    echo "Lighthouse 已在运行"
+else
+    echo "启动 Lighthouse..."
+    nohup lighthouse bn \
+        --network mainnet \
+        --datadir /var/lib/lighthouse \
+        --execution-endpoint http://127.0.0.1:8551 \
+        --execution-jwt /var/lib/reth/jwt-secret \
+        --checkpoint-sync-url https://beaconstate.info \
+        --http \
+        --http-address 0.0.0.0 \
+        --http-port 5052 \
+        --port 9000 \
+        --target-peers 25 \
+        --disable-deposit-contract-sync \
+        --execution-timeout-multiplier 2 \
+        > /var/log/lighthouse.log 2>&1 &
+    echo "Lighthouse 已启动，PID: $(pgrep -f 'lighthouse bn')"
+fi
+
+echo "节点启动完成"
+EOF
+
+chmod +x ~/start_nodes.sh
+```
+
+### 创建停止脚本
+
+```bash
+# 创建停止脚本
+cat > ~/stop_nodes.sh << 'EOF'
+#!/bin/bash
+
+echo "停止 Lighthouse..."
+pkill -f "lighthouse bn"
+sleep 2
+
+echo "停止 Reth..."
+pkill -f "reth node"
+sleep 2
+
+echo "检查进程..."
+if pgrep -f "reth node" > /dev/null || pgrep -f "lighthouse bn" > /dev/null; then
+    echo "警告: 仍有进程在运行"
+    pgrep -f "reth node" && echo "Reth PID: $(pgrep -f 'reth node')"
+    pgrep -f "lighthouse bn" && echo "Lighthouse PID: $(pgrep -f 'lighthouse bn')"
+else
+    echo "所有节点已停止"
+fi
+EOF
+
+chmod +x ~/stop_nodes.sh
+```
+
+### 使用脚本
+
+```bash
+# 启动节点
+~/start_nodes.sh
+
+# 停止节点
+~/stop_nodes.sh
 
 # 查看状态
-sudo systemctl status reth.service
-sudo systemctl status lighthouse-beacon.service
-
-# 查看日志
-sudo journalctl -u reth.service -f
-sudo journalctl -u lighthouse-beacon.service -f
+ps aux | grep -E "reth|lighthouse"
 ```
 
 ## 监控和维护
@@ -579,15 +696,14 @@ sudo journalctl -u lighthouse-beacon.service -f
 #### 查看实时日志
 
 ```bash
-# Reth 日志（如果使用 systemd）
-sudo journalctl -u reth.service -f
-
-# Lighthouse 日志（如果使用 systemd）
-sudo journalctl -u lighthouse-beacon.service -f
-
-# 如果使用 nohup
+# 查看 Reth 日志
 tail -f /var/log/reth.log
+
+# 查看 Lighthouse 日志
 tail -f /var/log/lighthouse.log
+
+# 同时查看两个日志
+tail -f /var/log/reth.log /var/log/lighthouse.log
 ```
 
 #### 日志轮转
@@ -658,16 +774,20 @@ netstat -an | grep -E "30303|9000|8545|5052"
 # 备份重要配置和密钥
 sudo tar -czf reth-lighthouse-backup-$(date +%Y%m%d).tar.gz \
     /var/lib/reth/jwt-secret \
-    /etc/systemd/system/reth.service \
-    /etc/systemd/system/lighthouse-beacon.service
+    ~/start_nodes.sh \
+    ~/stop_nodes.sh \
+    ~/start_reth.sh \
+    ~/start_lighthouse.sh
 ```
 
 #### 更新客户端
 
 ```bash
-# 停止服务
-sudo systemctl stop lighthouse-beacon.service
-sudo systemctl stop reth.service
+# 停止节点
+~/stop_nodes.sh
+# 或手动停止
+pkill -f "reth node"
+pkill -f "lighthouse bn"
 
 # 更新代码（如果从源码编译）
 cd /path/to/reth
@@ -680,9 +800,9 @@ git pull
 make
 sudo cp target/release/lighthouse /usr/local/bin/
 
-# 重启服务
-sudo systemctl start reth.service
-sudo systemctl start lighthouse-beacon.service
+# 重启节点
+~/start_nodes.sh
+# 或手动启动（参考运行节点章节）
 ```
 
 ## 故障排除
@@ -717,16 +837,22 @@ chmod 600 /var/lib/reth/jwt-secret
 
 **问题**: Engine API 连接失败
 
-- 检查 Reth 是否正在运行: `sudo systemctl status reth.service`
+- 检查 Reth 是否正在运行: `ps aux | grep "reth node"`
 - 检查 JWT secret 路径是否正确
 - 检查 Engine API 地址和端口（应该是 `127.0.0.1:8551`）
 - 检查防火墙是否阻止了本地连接
 
 ```bash
+# 检查 Reth 进程
+ps aux | grep "reth node"
+
 # 测试连接
 curl -X POST -H "Content-Type: application/json" \
     --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
     http://127.0.0.1:8551
+
+# 查看 Reth 日志
+tail -n 50 /var/log/reth.log
 ```
 
 #### 3. 同步缓慢
@@ -752,8 +878,10 @@ curl -X POST -H "Content-Type: application/json" \
 **解决方案**:
 
 - 监控磁盘使用: `df -h`
-- 预留足够的磁盘空间（建议 4TB+）
-- 考虑使用更大的磁盘或扩展存储
+- 使用修剪模式（`--prune`）可以大幅减少磁盘占用
+- 调整 `--prune.max-history` 参数，值越小占用越少（但会影响历史查询能力）
+- 定期清理日志文件: `find /var/log -name "*.log" -mtime +7 -delete`
+- 检查数据目录大小: `du -sh /var/lib/reth /var/lib/lighthouse`
 
 ### 日志分析
 
@@ -802,30 +930,85 @@ vmstat 1
 echo "* soft nofile 65535" | sudo tee -a /etc/security/limits.conf
 echo "* hard nofile 65535" | sudo tee -a /etc/security/limits.conf
 
-# 优化网络参数（参考 configure_sysctl.sh）
+# 优化网络参数
 sudo sysctl -w net.core.rmem_max=134217728
 sudo sysctl -w net.core.wmem_max=134217728
 sudo sysctl -w net.ipv4.tcp_fin_timeout=30
+sudo sysctl -w net.ipv4.tcp_keepalive_time=600
+sudo sysctl -w net.ipv4.tcp_keepalive_probes=3
+sudo sysctl -w net.ipv4.tcp_keepalive_intvl=15
+
+# 优化 I/O 调度（针对 SSD）
+echo noop | sudo tee /sys/block/nvme0n1/queue/scheduler 2>/dev/null || true
 ```
 
-### 2. Reth 优化
+### 2. Reth 磁盘空间优化
 
-- 使用 NVMe SSD
-- 增加 `--max-peers` 参数（根据网络带宽调整）
-- 使用 `--db.chaindata` 指定数据目录在快速磁盘上
+**修剪模式配置**:
+- `--prune`: 启用自动修剪，删除旧的历史数据
+- `--prune.max-history 128`: 只保留最近 128 个区块的历史（可根据需要调整）
+  - 值越小，磁盘占用越少，但历史查询能力越弱
+  - 推荐值：64-256 个区块
 
-### 3. Lighthouse 优化
+**数据库优化**:
+- `--db.max-readers 8`: 限制并发读取，避免过度占用资源
+- `--db.max-writers 4`: 限制并发写入，优化 I/O 性能
 
-- 使用检查点同步加速初始同步
-- 调整 `--target-peers` 参数
-- 如果不需要验证器，可以使用轻量级模式
+**交易池优化**:
+- `--txpool.max-size 1000`: 限制交易池大小（默认更大）
+- `--txpool.max-account-slots 16`: 限制每个账户的交易槽位
 
-### 4. 硬件建议
+### 3. Reth CPU 性能优化
 
-- **存储**: 使用 NVMe SSD，读写速度对同步性能至关重要
-- **内存**: 至少 32GB，推荐 64GB
-- **CPU**: 多核心有助于并行处理
-- **网络**: 稳定的高带宽连接
+**网络优化**:
+- `--max-peers 25`: 减少对等节点数（默认 50），降低网络处理负载
+- 根据实际网络带宽调整，带宽较小可以进一步降低
+
+**API 优化**:
+- 移除不必要的 API：`debug`, `trace` 等会占用大量 CPU 和内存
+- 只启用必要的 API：`eth,net,web3,engine,admin`
+
+### 4. Lighthouse 优化
+
+**同步优化**:
+- `--checkpoint-sync-url`: 使用检查点同步，大幅加速初始同步
+- `--target-peers 25`: 减少对等节点数，降低资源占用
+
+**功能裁剪**:
+- `--disable-deposit-contract-sync`: 如果不需要验证器功能，可以禁用
+- 移除 `--metrics`: 如果不需要监控指标，可以节省资源
+
+### 5. 磁盘空间占用对比
+
+| 模式 | 磁盘占用 | 历史数据 | 适用场景 |
+|------|---------|---------|---------|
+| 完整节点 | 2-4 TB | 完整历史 | 需要完整历史查询 |
+| 修剪模式（本配置） | 200-500 GB | 最近 128 区块 | 轻量级节点，节省空间 |
+| 最小修剪 | 100-200 GB | 最近 32-64 区块 | 极简配置 |
+
+### 6. 硬件建议（优化配置）
+
+- **存储**: 500 GB - 1 TB NVMe SSD（修剪模式）
+- **内存**: 16-32 GB RAM（足够运行修剪模式）
+- **CPU**: 4-8 核心（修剪模式对 CPU 要求较低）
+- **网络**: 100 Mbps+ 稳定连接
+
+### 7. 监控资源使用
+
+```bash
+# 监控 CPU 和内存
+top -p $(pgrep -d, -f "reth|lighthouse")
+
+# 监控磁盘 I/O
+iostat -x 1
+
+# 监控磁盘使用
+df -h
+du -sh /var/lib/reth /var/lib/lighthouse
+
+# 监控网络连接
+netstat -an | grep -E "30303|9000|8545|5052" | wc -l
+```
 
 ## 安全建议
 
