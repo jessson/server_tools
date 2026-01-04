@@ -594,26 +594,19 @@ else
     nohup reth node \
         --datadir /var/lib/reth \
         --chain mainnet \
-        --prune \
-        --prune.max-history 128 \
+        --full \
         --http \
         --http.api eth,net,web3,engine,admin \
         --http.port 8545 \
-        --http.addr 0.0.0.0 \
+        --http.addr 127.0.0.1 \
         --ws \
         --ws.api eth,net,web3,engine,admin \
         --ws.port 8546 \
-        --ws.addr 0.0.0.0 \
+        --ws.addr 127.0.0.1 \
         --authrpc.addr 127.0.0.1 \
         --authrpc.port 8551 \
         --authrpc.jwtsecret /var/lib/reth/jwt-secret \
-        --port 30303 \
-        --max-peers 25 \
-        --db.max-readers 8 \
-        --db.max-writers 4 \
-        --txpool.max-size 1000 \
-        --txpool.max-account-slots 16 \
-        > /var/log/reth.log 2>&1 &
+        --port 30303 
     echo "Reth 已启动，PID: $(pgrep -f 'reth node')"
 fi
 
