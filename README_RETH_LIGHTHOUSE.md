@@ -295,7 +295,7 @@ mkdir -p /etc/lighthouse
 # 创建日志目录
 mkdir -p /var/log/reth
 
-# 优化启动命令（手动启动）
+# 优化启动命令（手动启动，日志输出到文件，不输出到标准输出）
 reth node \
     --datadir /var/lib/reth \
     --chain mainnet \
@@ -317,7 +317,9 @@ reth node \
     --db.max-readers 8 \
     --db.max-writers 4 \
     --txpool.max-size 1000 \
-    --txpool.max-account-slots 16
+    --txpool.max-account-slots 16 \
+    --log.file /var/log/reth/reth.log \
+    --log.disable-stdout
 ```
 
 #### 优化参数说明
@@ -337,10 +339,14 @@ reth node \
 - 移除了 `debug` 和 `trace` API（这些会占用大量资源）
 - 只保留必要的 API：`eth,net,web3,engine,admin`
 
+**日志优化**:
+- `--log.file /var/log/reth/reth.log`: 将日志输出到文件
+- `--log.disable-stdout`: 禁用标准输出日志，避免控制台输出
+
 #### 使用 nohup 后台启动（推荐）
 
 ```bash
-# 使用 nohup 在后台启动 Reth
+# 使用 nohup 在后台启动 Reth（禁用标准输出，日志只输出到文件）
 nohup reth node \
     --datadir /var/lib/reth \
     --chain mainnet \
@@ -363,7 +369,9 @@ nohup reth node \
     --db.max-writers 4 \
     --txpool.max-size 1000 \
     --txpool.max-account-slots 16 \
-    > /var/log/reth.log 2>&1 &
+    --log.file /var/log/reth/reth.log \
+    --log.disable-stdout \
+    > /dev/null 2>&1 &
 
 # 查看进程
 ps aux | grep reth
@@ -403,7 +411,9 @@ reth node \
     --db.max-readers 8 \
     --db.max-writers 4 \
     --txpool.max-size 1000 \
-    --txpool.max-account-slots 16
+    --txpool.max-account-slots 16 \
+    --log.file /var/log/reth/reth.log \
+    --log.disable-stdout
 EOF
 
 chmod +x ~/start_reth.sh
@@ -542,38 +552,305 @@ screen -r lighthouse
 
 ### 检查 Reth 同步状态
 
+#### 基本查询
+
 ```bash
-# 通过 RPC 查询同步状态
+# 查询是否正在同步
 curl -X POST -H "Content-Type: application/json" \
     --data '{"jsonrpc":"2.0","method":"eth_syncing","params":[],"id":1}' \
-    http://localhost:8545
+    http://127.0.0.1:8545
 
-# 查询最新区块号
-curl -X POST -H "Content-Type: application/json" \
-    --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
-    http://localhost:8545
+# 如果返回 false，说明已同步完成
+# 如果返回对象，包含以下字段：
+# - startingBlock: 开始同步的区块号
+# - currentBlock: 当前已同步的区块号
+# - highestBlock: 目标区块号（链头）
 ```
 
-如果返回 `false`，说明已同步完成。
+#### 查询当前区块号
+
+```bash
+# 查询本地最新区块号（十六进制）
+curl -X POST -H "Content-Type: application/json" \
+    --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+    http://127.0.0.1:8545
+
+# 转换为十进制
+curl -X POST -H "Content-Type: application/json" \
+    --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+    http://127.0.0.1:8545 | jq -r '.result' | xargs printf "%d\n"
+```
+
+#### 查询链头区块号（网络最新区块）
+
+```bash
+# 需要连接到公共 RPC 节点查询（例如 Infura）
+# 或者使用其他已同步的节点
+curl -X POST -H "Content-Type: application/json" \
+    --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+    https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+```
+
+#### 计算同步进度
+
+```bash
+# 创建同步进度查询脚本
+cat > ~/check_reth_sync.sh << 'EOF'
+#!/bin/bash
+
+# 查询本地区块号
+LOCAL_BLOCK=$(curl -s -X POST -H "Content-Type: application/json" \
+    --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+    http://127.0.0.1:8545 | jq -r '.result' | xargs printf "%d\n")
+
+# 查询同步状态
+SYNC_STATUS=$(curl -s -X POST -H "Content-Type: application/json" \
+    --data '{"jsonrpc":"2.0","method":"eth_syncing","params":[],"id":1}' \
+    http://127.0.0.1:8545)
+
+# 检查是否已同步
+if echo "$SYNC_STATUS" | jq -e '.result == false' > /dev/null; then
+    echo "✅ Reth 已完全同步"
+    echo "当前区块: $LOCAL_BLOCK"
+else
+    # 正在同步
+    CURRENT=$(echo "$SYNC_STATUS" | jq -r '.result.currentBlock' | xargs printf "%d\n")
+    HIGHEST=$(echo "$SYNC_STATUS" | jq -r '.result.highestBlock' | xargs printf "%d\n")
+    
+    if [ "$HIGHEST" -gt 0 ]; then
+        PROGRESS=$(echo "scale=2; $CURRENT * 100 / $HIGHEST" | bc)
+        REMAINING=$((HIGHEST - CURRENT))
+        echo "🔄 Reth 正在同步..."
+        echo "当前区块: $CURRENT"
+        echo "目标区块: $HIGHEST"
+        echo "剩余区块: $REMAINING"
+        echo "同步进度: ${PROGRESS}%"
+    else
+        echo "🔄 Reth 正在同步..."
+        echo "当前区块: $LOCAL_BLOCK"
+    fi
+fi
+EOF
+
+chmod +x ~/check_reth_sync.sh
+
+# 运行脚本
+~/check_reth_sync.sh
+```
+
+#### 实时监控同步进度
+
+```bash
+# 每 10 秒刷新一次同步状态
+watch -n 10 ~/check_reth_sync.sh
+
+# 或者使用循环
+while true; do
+    clear
+    echo "=== Reth 同步状态 ==="
+    ~/check_reth_sync.sh
+    echo ""
+    echo "更新时间: $(date '+%Y-%m-%d %H:%M:%S')"
+    sleep 10
+done
+```
+
+#### 从日志查看同步信息
+
+```bash
+# 查看 Reth 日志中的同步信息
+tail -f /var/log/reth.log | grep -i "sync\|block\|peer"
+
+# 查看最近的同步日志
+grep -i "sync\|block" /var/log/reth.log | tail -20
+```
 
 ### 检查 Lighthouse 同步状态
 
+#### 基本查询
+
 ```bash
 # 查询同步状态
-curl http://localhost:5052/eth/v1/node/syncing
+curl -s http://127.0.0.1:5052/eth/v1/node/syncing | jq
 
-# 查询健康状态
-curl http://localhost:5052/eth/v1/node/health
-
-# 查询链头信息
-curl http://localhost:5052/eth/v1/beacon/headers/finalized
+# 返回示例：
+# {
+#   "data": {
+#     "head_slot": "12345678",
+#     "sync_distance": "1234",
+#     "is_syncing": true
+#   }
+# }
 ```
 
-### 同步时间
+#### 查询健康状态
 
+```bash
+# 查询节点健康状态
+curl -s http://127.0.0.1:5052/eth/v1/node/health
+
+# 返回 200 表示健康，503 表示未同步
+```
+
+#### 查询链头信息
+
+```bash
+# 查询最终确认的区块头
+curl -s http://127.0.0.1:5052/eth/v1/beacon/headers/finalized | jq
+
+# 查询链头区块
+curl -s http://127.0.0.1:5052/eth/v1/beacon/headers/head | jq
+```
+
+#### 计算 Lighthouse 同步进度
+
+```bash
+# 创建 Lighthouse 同步进度查询脚本
+cat > ~/check_lighthouse_sync.sh << 'EOF'
+#!/bin/bash
+
+SYNC_DATA=$(curl -s http://127.0.0.1:5052/eth/v1/node/syncing)
+IS_SYNCING=$(echo "$SYNC_DATA" | jq -r '.data.is_syncing')
+HEAD_SLOT=$(echo "$SYNC_DATA" | jq -r '.data.head_slot' | xargs printf "%d\n")
+SYNC_DISTANCE=$(echo "$SYNC_DATA" | jq -r '.data.sync_distance' | xargs printf "%d\n")
+
+if [ "$IS_SYNCING" = "false" ]; then
+    echo "✅ Lighthouse 已完全同步"
+    echo "当前 Slot: $HEAD_SLOT"
+else
+    echo "🔄 Lighthouse 正在同步..."
+    echo "当前 Slot: $HEAD_SLOT"
+    echo "同步距离: $SYNC_DISTANCE slots"
+    
+    # 估算剩余时间（每个 slot 约 12 秒）
+    if [ "$SYNC_DISTANCE" -gt 0 ]; then
+        SECONDS=$((SYNC_DISTANCE * 12))
+        HOURS=$((SECONDS / 3600))
+        MINUTES=$(((SECONDS % 3600) / 60))
+        echo "预计剩余时间: ${HOURS}小时 ${MINUTES}分钟"
+    fi
+fi
+
+# 查询健康状态
+HEALTH=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5052/eth/v1/node/health)
+if [ "$HEALTH" = "200" ]; then
+    echo "健康状态: ✅ 健康"
+else
+    echo "健康状态: ⚠️  未就绪"
+fi
+EOF
+
+chmod +x ~/check_lighthouse_sync.sh
+
+# 运行脚本
+~/check_lighthouse_sync.sh
+```
+
+#### 实时监控 Lighthouse 同步
+
+```bash
+# 每 10 秒刷新一次
+watch -n 10 ~/check_lighthouse_sync.sh
+
+# 或者使用循环
+while true; do
+    clear
+    echo "=== Lighthouse 同步状态 ==="
+    ~/check_lighthouse_sync.sh
+    echo ""
+    echo "更新时间: $(date '+%Y-%m-%d %H:%M:%S')"
+    sleep 10
+done
+```
+
+#### 从日志查看同步信息
+
+```bash
+# 查看 Lighthouse 日志中的同步信息
+tail -f /var/log/lighthouse.log | grep -i "sync\|slot\|epoch\|peer"
+
+# 查看最近的同步日志
+grep -i "sync\|slot\|epoch" /var/log/lighthouse.log | tail -20
+```
+
+### 综合监控脚本
+
+```bash
+# 创建综合监控脚本，同时查看 Reth 和 Lighthouse 状态
+cat > ~/check_sync_status.sh << 'EOF'
+#!/bin/bash
+
+echo "=========================================="
+echo "    节点同步状态监控"
+echo "=========================================="
+echo ""
+
+echo "--- Reth (执行层) ---"
+if pgrep -f "reth node" > /dev/null; then
+    ~/check_reth_sync.sh 2>/dev/null || echo "⚠️  无法连接到 Reth RPC"
+else
+    echo "❌ Reth 未运行"
+fi
+
+echo ""
+echo "--- Lighthouse (共识层) ---"
+if pgrep -f "lighthouse bn" > /dev/null; then
+    ~/check_lighthouse_sync.sh 2>/dev/null || echo "⚠️  无法连接到 Lighthouse API"
+else
+    echo "❌ Lighthouse 未运行"
+fi
+
+echo ""
+echo "=========================================="
+echo "更新时间: $(date '+%Y-%m-%d %H:%M:%S')"
+echo "=========================================="
+EOF
+
+chmod +x ~/check_sync_status.sh
+
+# 运行综合监控
+~/check_sync_status.sh
+
+# 实时监控（每 30 秒刷新）
+watch -n 30 ~/check_sync_status.sh
+```
+
+### 同步时间参考
+
+- **完整同步模式**: 首次同步可能需要数天到数周，取决于硬件和网络
 - **修剪模式同步**: 使用 `--prune` 模式，首次同步时间会大幅缩短，通常数小时到数天即可完成
-- **检查点同步**: 使用 `--checkpoint-sync-url` 可以大幅加速 Lighthouse 初始同步（推荐）
-- **磁盘占用**: 修剪模式下的磁盘占用约为完整节点的 10-20%，通常只需要 200-500 GB
+- **检查点同步**: 使用 `--checkpoint-sync-url` 可以大幅加速 Lighthouse 初始同步（推荐，通常几小时即可完成）
+- **磁盘占用**: 
+  - 完整节点: 2-4 TB
+  - 修剪模式: 200-500 GB（约为完整节点的 10-20%）
+
+### 同步速度优化建议
+
+如果同步速度较慢，可以尝试：
+
+1. **增加对等节点数**（如果网络带宽充足）:
+   ```bash
+   # 在启动命令中增加
+   --max-peers 50  # Reth
+   --target-peers 50  # Lighthouse
+   ```
+
+2. **检查网络连接**:
+   ```bash
+   # 查看网络连接数
+   netstat -an | grep -E "30303|9000" | wc -l
+   ```
+
+3. **检查磁盘 I/O**:
+   ```bash
+   # 监控磁盘 I/O
+   iostat -x 1
+   ```
+
+4. **使用检查点同步**（Lighthouse）:
+   ```bash
+   --checkpoint-sync-url https://beaconstate.info
+   ```
 
 ## 启动脚本（可选）
 
@@ -606,7 +883,10 @@ else
         --authrpc.addr 127.0.0.1 \
         --authrpc.port 8551 \
         --authrpc.jwtsecret /var/lib/reth/jwt-secret \
-        --port 30303 
+        --port 30303 \
+        --log.file /var/log/reth/reth.log \
+        --log.disable-stdout \
+        > /dev/null 2>&1 &
     echo "Reth 已启动，PID: $(pgrep -f 'reth node')"
 fi
 
