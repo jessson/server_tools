@@ -88,6 +88,7 @@ show_menu() {
     echo "  [10] 安装 Node.js (使用 nvm)"
     echo "  [11] 安装 fail2ban (入侵防护)"
     echo "  [12] 配置系统内核参数优化 (BSC节点优化)"
+    echo "  [13] 恢复 Redis RDB 文件"
     echo ""
     echo "  [A] 全部执行（按依赖顺序）"
     echo "  [Q] 退出"
@@ -125,6 +126,7 @@ parse_selection() {
             10) selected_modules+=("install_node") ;;
             11) selected_modules+=("install_fail2ban") ;;
             12) selected_modules+=("configure_sysctl") ;;
+            13) selected_modules+=("restore_redis_rdb") ;;
         esac
     done
     
@@ -138,12 +140,13 @@ sort_modules_by_dependencies() {
     local processed=()
     
     # 定义模块执行顺序（按依赖关系）
-    local execution_order=("create_user" "install_build_tools" "install_cpupower" "set_cpu_performance" "install_redis" "configure_ssh" "configure_firewall" "install_golang" "install_rust" "install_node" "install_fail2ban" "configure_sysctl")
+    local execution_order=("create_user" "install_build_tools" "install_cpupower" "set_cpu_performance" "install_redis" "restore_redis_rdb" "configure_ssh" "configure_firewall" "install_golang" "install_rust" "install_node" "install_fail2ban" "configure_sysctl")
     
     # 定义依赖关系：key 是模块名，value 是其依赖的模块
     declare -A dependencies
     dependencies["set_cpu_performance"]="install_cpupower"
     dependencies["configure_ssh"]="create_user"
+    dependencies["restore_redis_rdb"]="install_redis"
     
     # 按照预定义的执行顺序，只添加用户选择的模块
     for module in "${execution_order[@]}"; do
@@ -243,6 +246,21 @@ execute_modules() {
                 if [ "$user_exists" = false ]; then
                     echo ""
                     echo "警告: configure_ssh 需要先创建用户，但未选择 create_user 且用户 $TARGET_USER 不存在，跳过..."
+                    continue
+                fi
+                ;;
+            "restore_redis_rdb")
+                # 检查 Redis 是否安装（检查是否在当前执行列表中，或已安装）
+                local redis_installed=false
+                if [[ " ${sorted_modules[@]} " =~ " install_redis " ]]; then
+                    redis_installed=true
+                elif command -v redis-server &>/dev/null; then
+                    redis_installed=true
+                fi
+                
+                if [ "$redis_installed" = false ]; then
+                    echo ""
+                    echo "警告: restore_redis_rdb 需要先安装 Redis，但未选择 install_redis 且系统中未找到 Redis，跳过..."
                     continue
                 fi
                 ;;

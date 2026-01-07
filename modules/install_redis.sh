@@ -107,6 +107,22 @@ if [ "$REDIS_INSTALLED" = true ]; then
             echo "已配置 Unix Domain Socket: $SOCKET_PATH"
             echo "Socket 权限: 770"
             
+            # 将当前用户添加到 redis 组
+            if getent group redis > /dev/null 2>&1; then
+                CURRENT_USER=$(whoami)
+                if ! groups "$CURRENT_USER" | grep -q "\bredis\b"; then
+                    echo ""
+                    echo "将用户 $CURRENT_USER 添加到 redis 组..."
+                    usermod -aG redis "$CURRENT_USER"
+                    echo "用户 $CURRENT_USER 已添加到 redis 组"
+                    echo "注意: 需要重新登录或使用 'newgrp redis' 才能使组权限生效"
+                else
+                    echo "用户 $CURRENT_USER 已在 redis 组中"
+                fi
+            else
+                echo "警告: redis 组不存在，请检查 Redis 安装"
+            fi
+            
         else
             # 确保使用 TCP 连接（取消注释 port，禁用 unixsocket）
             if grep -q "^#port " "$REDIS_CONF"; then
