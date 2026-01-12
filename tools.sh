@@ -89,6 +89,7 @@ show_menu() {
     echo "  [11] 安装 fail2ban (入侵防护)"
     echo "  [12] 配置系统内核参数优化 (BSC节点优化)"
     echo "  [13] 恢复 Redis RDB 文件"
+    echo "  [14] 安装 MySQL (Community Server，仅本地访问)"
     echo ""
     echo "  [A] 全部执行（按依赖顺序）"
     echo "  [Q] 退出"
@@ -106,7 +107,7 @@ parse_selection() {
     
     # 处理全部执行
     if [[ "$selection" == *"a"* ]] || [[ "$selection" == *"all"* ]]; then
-        selected_modules=("create_user" "install_build_tools" "install_cpupower" "set_cpu_performance" "install_redis" "configure_ssh" "configure_firewall" "install_golang" "install_rust" "install_node" "install_fail2ban")
+        selected_modules=("create_user" "install_build_tools" "install_cpupower" "set_cpu_performance" "install_redis" "configure_ssh" "configure_firewall" "install_golang" "install_rust" "install_node" "install_fail2ban" "install_mysql_free")
         echo "${selected_modules[@]}"
         return 0
     fi
@@ -127,6 +128,7 @@ parse_selection() {
             11) selected_modules+=("install_fail2ban") ;;
             12) selected_modules+=("configure_sysctl") ;;
             13) selected_modules+=("restore_redis_rdb") ;;
+            14) selected_modules+=("install_mysql_free") ;;
         esac
     done
     
@@ -140,7 +142,7 @@ sort_modules_by_dependencies() {
     local processed=()
     
     # 定义模块执行顺序（按依赖关系）
-    local execution_order=("create_user" "install_build_tools" "install_cpupower" "set_cpu_performance" "install_redis" "restore_redis_rdb" "configure_ssh" "configure_firewall" "install_golang" "install_rust" "install_node" "install_fail2ban" "configure_sysctl")
+    local execution_order=("create_user" "install_build_tools" "install_cpupower" "set_cpu_performance" "install_redis" "restore_redis_rdb" "configure_ssh" "configure_firewall" "install_golang" "install_rust" "install_node" "install_fail2ban" "configure_sysctl" "install_mysql_free")
     
     # 定义依赖关系：key 是模块名，value 是其依赖的模块
     declare -A dependencies
